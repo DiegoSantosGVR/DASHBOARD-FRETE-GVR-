@@ -461,14 +461,40 @@ function ratioChart(id, labels, ratioArr, avgArr, mini, fixed){
     }, animation:{duration:500} }});
   chartReg.push(c);
 }
-
+function ratioBarMini(id, labels, ratioArr, avgArr, fixed, barColor){
+  const ctx=document.getElementById(id); if(!ctx) return;
+  const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
+  const vals=ratioArr.map(v=> v==null? null : v*100);
+  const c=new Chart(ctx,{ data:{ labels, datasets:[
+      {type:'bar', label:'Frete/NF %', data:vals, backgroundColor:barColor, borderRadius:2, maxBarThickness:13, order:2},
+      {type:'line', label:'Média do ano', data:avgArr.map(v=>v*100), borderColor:cssVar('--accent'), borderWidth:1.4, borderDash:[6,4], pointRadius:0, fill:false, tension:0, order:1}
+  ]}, options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'},
+    layout:{padding:{top:14}},
+    plugins:{ legend:{display:false}, tooltip:{ backgroundColor:cssVar('--surface'), titleColor:cssVar('--text'), bodyColor:cssVar('--text-muted'), borderColor:cssVar('--border'), borderWidth:1, padding:9, cornerRadius:10, titleFont:{family:"'Space Grotesk'",weight:'600'},
+      callbacks:{ label:c=> c.parsed.y==null? null : ' '+c.dataset.label+': '+c.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%' }}},
+    scales:{
+      x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:9}} },
+      y:{ min:0, max:fixed?fixed.yMax:undefined, grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:9},callback:v=>v.toFixed(1)+'%'} }
+    }, animation:{duration:500} },
+    plugins:[{ id:'miniLabels', afterDatasetsDraw(chart){
+      const meta=chart.getDatasetMeta(0); if(!meta) return; const {ctx}=chart; ctx.save();
+      ctx.font="600 7px Inter, sans-serif"; ctx.textAlign='center'; ctx.fillStyle=cssVar('--text-muted');
+      meta.data.forEach((bar,i)=>{ const v=chart.data.datasets[0].data[i]; if(v==null) return;
+        ctx.fillText(v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%', bar.x, bar.y-2); });
+      ctx.restore();
+    }}]
+  });
+  chartReg.push(c);
+}
 function kpiCardHTML(idx, title, subtitle, legend){
   const st=kpiState['k'+idx];
   const years=availYears(FILT);
   const yearBtns=['all',...years].map(y=>`<button data-kpi="${idx}" data-year="${y}" class="${(!st.compare&&String(st.year)===String(y))?'active':''}">${y==='all'?'Todos':y}</button>`).join('');
   const area = st.compare
     ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="kpi${idx}Grid"></div>`
-    : `<div style="height:320px" class="relative"><canvas id="kpi${idx}Canvas"></canvas></div>`;
+    : (idx===2
+      ? `<div style="height:340px" class="relative"><canvas id="kpi2Canvas"></canvas></div><div class="mt-3 pt-3" style="border-top:1px solid var(--border)" id="kpi2Consol"></div>`
+      : `<div style="height:320px" class="relative"><canvas id="kpi${idx}Canvas"></canvas></div>`);
   return `
     <div class="surface rounded-2xl p-4 md:p-5">
       <div class="flex items-start justify-between flex-wrap gap-3 mb-3">
@@ -484,6 +510,59 @@ function kpiCardHTML(idx, title, subtitle, legend){
       </div>
       ${area}
     </div>`;
+}
+
+function groupedRatioChart(id, rows, years){
+  const ctx=document.getElementById(id); if(!ctx) return;
+  const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
+  const perYear={}; years.forEach(y=>perYear[y]=monthlyByYear(rows,y));
+  const barDs=years.map(y=>({ type:'bar', label:String(y), yAxisID:'y',
+    data:perYear[y].map(x=> x.nf>0? x.ratio*100 : null),
+    backgroundColor:YEAR_COLORS[y]||PALETTE[0], borderRadius:3, maxBarThickness:26, order:2 }));
+  const avgDs=years.map(y=>({ type:'line', label:'__avg'+y, yAxisID:'y',
+    data:new Array(12).fill(yearAvgRatio(rows,y)*100),
+    borderColor:hexA(YEAR_COLORS[y]||'#888',.5), borderWidth:1, borderDash:[3,3], pointRadius:0, fill:false, tension:0, order:1 }));
+  let mR=0; years.forEach(y=>perYear[y].forEach(x=>mR=Math.max(mR,(x.ratio||0)*100)));
+  const fsize = years.length>1 ? 8 : 10;
+  const c=new Chart(ctx,{ data:{ labels:MES_ORDER.map(m=>MES_ABBR[m]), datasets:[...barDs,...avgDs] },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'},
+      layout:{padding:{top:20}},
+      plugins:{ legend:{display:false},
+        tooltip:{ backgroundColor:cssVar('--surface'), titleColor:cssVar('--text'), bodyColor:cssVar('--text-muted'), borderColor:cssVar('--border'), borderWidth:1, padding:10, cornerRadius:10, titleFont:{family:"'Space Grotesk'",weight:'600'},
+          filter:item=>!String(item.dataset.label).startsWith('__avg'),
+          callbacks:{ label:c=> c.parsed.y==null? null : ' '+c.dataset.label+': '+c.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%' }}},
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:11}} },
+        y:{ beginAtZero:true, max:niceCeil(mR), grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:11},callback:v=>v+'%'} }
+      }, animation:{duration:550} },
+    plugins:[{ id:'grpLabels', afterDatasetsDraw(chart){
+      const {ctx}=chart; ctx.save(); ctx.font=`600 ${fsize}px Inter, sans-serif`; ctx.textAlign='center'; ctx.fillStyle=cssVar('--text-muted');
+      chart.data.datasets.forEach((ds,di)=>{ if(String(ds.label).startsWith('__avg')) return;
+        chart.getDatasetMeta(di).data.forEach((bar,i)=>{ const v=ds.data[i]; if(v==null) return;
+          ctx.fillText(v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%', bar.x, bar.y-3); });
+      });
+      ctx.restore();
+    }}]
+  });
+  chartReg.push(c);
+}
+function kpi2ConsolHTML(){
+  const rows=FILT; const ys=availYears(rows);
+  if(!ys.length) return '';
+  const cards=ys.map((y,i)=>{
+    const av=yearAvgRatio(rows,y)*100;
+    let delta;
+    if(i===0) delta='<span style="color:var(--text-dim)">linha de base</span>';
+    else{ const prev=yearAvgRatio(rows,ys[i-1])*100; const d=prev?(av/prev-1)*100:0; const up=d>=0;
+      delta=`<span style="color:${up?'var(--accent)':'var(--pos)'};font-weight:600">${up?'▲':'▼'} ${up?'+':''}${d.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})}% vs ${ys[i-1]}</span>`; }
+    const partial = monthlyByYear(rows,y).filter(x=>x.nf>0).length<12;
+    return `<div class="flex-1 min-w-[150px] px-4 py-1 ${i>0?'yc-div':''}">
+      <div class="card-title">${y}${partial?' · parcial':''}</div>
+      <div class="font-display font-bold text-[20px] tnum mt-0.5">${av.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}%</div>
+      <div class="text-[12px] mt-0.5">${delta}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card-title mb-2">Evolução do Frete/NF médio anual</div><div class="flex flex-wrap items-stretch">${cards}</div>`;
 }
 
 function drawKpi(idx){
@@ -505,20 +584,23 @@ function drawKpi(idx){
     years.forEach((y,i)=>{
       const a=perYear[i];
       if(idx===1) comboChart('kpi1m'+y, initials, a.map(x=>x.nf), a.map(x=>x.f), true, fixed);
-      else { const av=yearAvgRatio(rows,y); ratioChart('kpi2m'+y, initials, a.map(x=>x.ratio), a.map(()=>av), true, fixed); }
+      else { const av=yearAvgRatio(rows,y); ratioBarMini('kpi2m'+y, initials, a.map(x=>x.ratio), a.map(()=>av), fixed, YEAR_COLORS[y]||K2_LINE); }
     });
+    return;
+  }
+  if(idx===2){
+    const yearsToShow = st.year==='all' ? years : [ +st.year ];
+    groupedRatioChart('kpi2Canvas', rows, yearsToShow);
+    const consol=document.getElementById('kpi2Consol'); if(consol) consol.innerHTML=kpi2ConsolHTML();
     return;
   }
   if(st.year==='all'){
     const arr=monthlyAgg(rows);
     const labels=arr.map(a=>{const[y,mo]=a.k.split('_');return MES_MIN[+mo-1]+'/'+y.slice(2);});
-    if(idx===1) comboChart('kpi1Canvas', labels, arr.map(a=>a.nf), arr.map(a=>a.f));
-    else{ const avgCache={}; const av=k=>{const y=k.split('_')[0]; if(!(y in avgCache)) avgCache[y]=yearAvgRatio(rows,+y); return avgCache[y];};
-      ratioChart('kpi2Canvas', labels, arr.map(a=>a.ratio), arr.map(a=>av(a.k))); }
+    comboChart('kpi1Canvas', labels, arr.map(a=>a.nf), arr.map(a=>a.f));
   }else{
     const a=monthlyByYear(rows,st.year), labels=MES_MIN.map(cap);
-    if(idx===1) comboChart('kpi1Canvas', labels, a.map(x=>x.nf), a.map(x=>x.f));
-    else{ const avg=yearAvgRatio(rows,st.year); ratioChart('kpi2Canvas', labels, a.map(x=>x.ratio), a.map(()=>avg)); }
+    comboChart('kpi1Canvas', labels, a.map(x=>x.nf), a.map(x=>x.f));
   }
 }
 
@@ -947,13 +1029,20 @@ function render(){
   if(!years.length){ $('#canvas').className=''; $('#canvas').innerHTML='<div class="text-center py-20" style="color:var(--text-dim)">Sem dados.</div>'; return; }
   const legK1=`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${nfBar()};display:inline-block"></span>NF transportada</span>`+
               `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${FRETE_LINE};display:inline-block"></span>Frete pago</span>`;
-  const legK2=`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${K2_LINE};display:inline-block"></span>Percentual mensal</span>`+
-              `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:0;border-top:2px dashed var(--accent);display:inline-block"></span>Média do ano</span>`;
+  const k2cmp=kpiState.k2.compare;
+  const legK2 = k2cmp
+    ? `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${K2_LINE};display:inline-block"></span>Percentual mensal</span>`+
+      `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:0;border-top:2px dashed var(--accent);display:inline-block"></span>Média do ano</span>`
+    : availYears(rows).map(y=>`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${YEAR_COLORS[y]||'#888'};display:inline-block"></span>${y}</span>`).join('')+
+      `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:0;border-top:1px dashed var(--text-dim);display:inline-block"></span>média do ano (sutil)</span>`;
+  const subK2 = k2cmp
+    ? 'Linha cheia = percentual mensal · linha tracejada = média do ano'
+    : 'Colunas = % Frete/NF por mês, anos lado a lado · linha tracejada sutil = média de cada ano';
   $('#canvas').className='space-y-4';
   $('#canvas').innerHTML =
       yearBlockHTML(rows)
     + kpiCardHTML(1,'Valor pago de frete × valor de NF transportado','Barras = NF transportada (mi, esq.) · linha = frete pago (mil, dir.)', legK1)
-    + kpiCardHTML(2,'Frete / NF por mês','Linha cheia = percentual mensal · linha tracejada = média do ano', legK2)
+    + kpiCardHTML(2,'Frete / NF por mês', subK2, legK2)
     + kpiVolCardHTML()
     + kpi3CardHTML()
     + kpi4CardHTML()
