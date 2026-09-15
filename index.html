@@ -666,38 +666,31 @@ function drawKpiVol(){
     per.forEach(p=> volFaixaMini('volm'+p.y, p.pct, p.ratio, fixed));
     return;
   }
+  if(kpiVolState.mode==='periodo'){ drawVolPeriodo(); return; }
+  // ----- Por faixa -----
   const base=volBaseRows();
   const ctx=document.getElementById('kpiVolCanvas'); if(!ctx) return;
   const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
-  const isPer = kpiVolState.mode==='periodo';
-  let labels, bars, line, barName, xTitle, yTitle;
-  if(!isPer){
-    const s=volBandStats(base);
-    labels=s.map(x=>x.label); bars=s.map(x=>x.n); line=s.map(x=>x.ratio);
-    barName='CTEs'; xTitle='volumes embarcados por CTE'; yTitle='nº de CTEs';
-  }else{
-    const s=volMonthStats(base);
-    labels=s.map(x=>x.label); bars=s.map(x=>x.v); line=s.map(x=>x.ratio);
-    barName='Volumes'; xTitle='período'; yTitle='volumes embarcados';
-  }
+  const s=volBandStats(base);
+  const labels=s.map(x=>x.label), bars=s.map(x=>x.n), line=s.map(x=>x.ratio);
   const c=new Chart(ctx,{ data:{ labels, datasets:[
-      {type:'bar', label:barName, data:bars, yAxisID:'y', backgroundColor:nfBar(), borderRadius:4, maxBarThickness:isPer?22:52, order:2},
-      {type:'line', label:'Frete/NF', data:line, yAxisID:'y1', borderColor:K2_LINE, backgroundColor:K2_LINE, borderWidth:2.6, pointRadius:isPer?2:3, pointHoverRadius:5, tension:.3, order:1, spanGaps:true}
+      {type:'bar', label:'CTEs', data:bars, yAxisID:'y', backgroundColor:nfBar(), borderRadius:4, maxBarThickness:52, order:2},
+      {type:'line', label:'Frete/NF', data:line, yAxisID:'y1', borderColor:K2_LINE, backgroundColor:K2_LINE, borderWidth:2.6, pointRadius:3, pointHoverRadius:5, tension:.3, order:1, spanGaps:true}
   ]}, options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'},
       layout:{padding:{top:20}},
       plugins:{ legend:{display:false},
         tooltip:{ backgroundColor:cssVar('--surface'), titleColor:cssVar('--text'), bodyColor:cssVar('--text-muted'), borderColor:cssVar('--border'), borderWidth:1, padding:10, cornerRadius:10, titleFont:{family:"'Space Grotesk'",weight:'600'},
           callbacks:{
-            title:items=> items.length? (isPer? items[0].label : items[0].label+' volume(s) por CTE') : '',
+            title:items=> items.length? items[0].label+' volume(s) por CTE' : '',
             label:c=> c.dataset.yAxisID==='y1'
               ? (c.parsed.y==null? null : ' Frete/NF: '+c.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%')
-              : (isPer?' Volumes: ':' CTEs: ')+c.parsed.y.toLocaleString('pt-BR') }}},
+              : ' CTEs: '+c.parsed.y.toLocaleString('pt-BR') }}},
       scales:{
-        x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:isPer?10:12},maxRotation:0,autoSkip:true,maxTicksLimit:isPer?14:8}, title:{display:true,text:xTitle,color:cssVar('--text-dim'),font:{size:10}} },
-        y:{ position:'left', beginAtZero:true, grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:11},callback:v=>v>=1000?(v/1000).toLocaleString('pt-BR',{maximumFractionDigits:0})+' mil':v}, title:{display:true,text:yTitle,color:cssVar('--text-dim'),font:{size:10}} },
+        x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:12}}, title:{display:true,text:'volumes embarcados por CTE',color:cssVar('--text-dim'),font:{size:10}} },
+        y:{ position:'left', beginAtZero:true, grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:11}}, title:{display:true,text:'nº de CTEs',color:cssVar('--text-dim'),font:{size:10}} },
         y1:{ position:'right', beginAtZero:true, grid:{display:false}, ticks:{color:tc,font:{size:11},callback:v=>v+'%'}, title:{display:true,text:'Frete/NF',color:cssVar('--text-dim'),font:{size:10}} }
       }, animation:{duration:550} },
-    plugins: isPer? [] : [{
+    plugins:[{
       id:'volRatioLabels',
       afterDatasetsDraw(chart){
         const meta=chart.getDatasetMeta(1); if(!meta) return; const {ctx}=chart; ctx.save();
@@ -710,6 +703,35 @@ function drawKpiVol(){
   });
   chartReg.push(c);
 }
+function drawVolPeriodo(){
+  const base=volBaseRows();
+  const ctx=document.getElementById('kpiVolCanvas'); if(!ctx) return;
+  const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
+  const years=availYears(base);
+  const per=years.map(y=>{
+    const a=Array.from({length:12},()=>({v:0,f:0,nf:0}));
+    for(const r of base){ if(+r.Ano!==+y) continue; const ym=r.AnoMes; if(!ym) continue; const mo=+ym.split('_')[1]-1;
+      if(mo>=0&&mo<12){ a[mo].v+=+r.Volume||0; a[mo].f+=+r.Frete||0; a[mo].nf+=+r.ValorNF||0; } }
+    return { y, vol:a.map(x=>x.v), ratio:a.map(x=>x.nf>0? x.f/x.nf*100 : null) };
+  });
+  const barDs=per.map(p=>({type:'bar', label:String(p.y), data:p.vol, yAxisID:'y', backgroundColor:YEAR_COLORS[p.y]||nfBar(), borderRadius:3, maxBarThickness:16, order:2}));
+  const lineDs=per.map(p=>({type:'line', label:String(p.y)+' · Frete/NF', data:p.ratio, yAxisID:'y1', borderColor:YEAR_COLORS[p.y]||K2_LINE, backgroundColor:YEAR_COLORS[p.y]||K2_LINE, borderWidth:1.6, pointRadius:1.5, pointHoverRadius:4, tension:.3, order:1, spanGaps:true}));
+  const c=new Chart(ctx,{ data:{ labels:MES_ORDER.map(m=>MES_ABBR[m]), datasets:[...barDs,...lineDs] },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'},
+      plugins:{ legend:{display:false},
+        tooltip:{ backgroundColor:cssVar('--surface'), titleColor:cssVar('--text'), bodyColor:cssVar('--text-muted'), borderColor:cssVar('--border'), borderWidth:1, padding:10, cornerRadius:10, titleFont:{family:"'Space Grotesk'",weight:'600'},
+          callbacks:{ title:items=> items.length? items[0].label : '',
+            label:c=> c.dataset.yAxisID==='y1'
+              ? (c.parsed.y==null? null : ' '+c.dataset.label+': '+c.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%')
+              : (c.parsed.y==null? null : ' '+c.dataset.label+': '+c.parsed.y.toLocaleString('pt-BR')+' vol') }}},
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:11}}, title:{display:true,text:'mês',color:cssVar('--text-dim'),font:{size:10}} },
+        y:{ position:'left', beginAtZero:true, grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:11},callback:v=>v>=1000?(v/1000).toLocaleString('pt-BR',{maximumFractionDigits:0})+' mil':v}, title:{display:true,text:'volumes embarcados',color:cssVar('--text-dim'),font:{size:10}} },
+        y1:{ position:'right', beginAtZero:true, grid:{display:false}, ticks:{color:tc,font:{size:11},callback:v=>v+'%'}, title:{display:true,text:'Frete/NF',color:cssVar('--text-dim'),font:{size:10}} }
+      }, animation:{duration:550} }
+  });
+  chartReg.push(c);
+}
 function kpiVolCardHTML(){
   const st=kpiVolState;
   const eff=volEffCompare();
@@ -718,8 +740,14 @@ function kpiVolCardHTML(){
   const opts='<option value="all">Geral (todas as transportadoras)</option>'+
     carriers.map(t=>`<option value="${String(t).replace(/"/g,'&quot;')}" ${st.transp===t?'selected':''}>${t}</option>`).join('');
   const barLegLabel = eff ? '% dos CTEs (no ano)' : (st.mode==='periodo' ? 'volumes embarcados' : 'nº de CTEs');
-  const legend=`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${nfBar()};display:inline-block"></span>${barLegLabel}</span>`+
-    `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${K2_LINE};display:inline-block"></span>Frete/NF</span>`;
+  let legend;
+  if(st.mode==='periodo' && !eff){
+    legend = availYears(FILT).map(y=>`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${YEAR_COLORS[y]||nfBar()};display:inline-block"></span>${y}</span>`).join('')+
+      `<span class="text-[12px]" style="color:var(--text-dim)">barras = volumes · linha = Frete/NF</span>`;
+  } else {
+    legend=`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${nfBar()};display:inline-block"></span>${barLegLabel}</span>`+
+      `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${K2_LINE};display:inline-block"></span>Frete/NF</span>`;
+  }
   const segBtn=(v,l)=>`<button data-volseg="${v}" class="${st.seg===v?'active':''}">${l}</button>`;
   const modeBtn=(v,l)=>`<button data-volmode="${v}" class="${st.mode===v?'active':''}">${l}</button>`;
   const isPer=st.mode==='periodo';
