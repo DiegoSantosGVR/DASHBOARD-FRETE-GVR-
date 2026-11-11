@@ -405,6 +405,7 @@ function yearBlockHTML(rows){
 const kpiState = { k1:{year:'all',compare:false,resp:'all'}, k2:{year:'all',compare:false,resp:'all'} };
 let chartReg = [];
 const FRETE_LINE='#C64A32', K2_LINE='#3A7CA5';
+const NF_LEFTW=84; // largura fixa da coluna à esquerda (eixo do gráfico = 1ª coluna da tabela), para alinhar os meses
 function nfBar(){ return hexA(cssVar('--text-muted'),.30); }
 const cap = s=> s.charAt(0).toUpperCase()+s.slice(1);
 
@@ -492,9 +493,9 @@ function kpiCardHTML(idx, title, subtitle, legend){
   const yearBtns=['all',...years].map(y=>`<button data-kpi="${idx}" data-year="${y}" class="${(!st.compare&&String(st.year)===String(y))?'active':''}">${y==='all'?'Todos':y}</button>`).join('');
   const area = st.compare
     ? `<div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="kpi${idx}Grid"></div>`
-    : (idx===2
-      ? `<div style="height:340px" class="relative"><canvas id="kpi2Canvas"></canvas></div><div class="mt-3 pt-3" style="border-top:1px solid var(--border)" id="kpi2Consol"></div>`
-      : `<div style="height:320px" class="relative"><canvas id="kpi${idx}Canvas"></canvas></div>`);
+    : (idx===1
+      ? `<div style="height:300px" class="relative"><canvas id="kpi1Canvas"></canvas></div><div id="kpi1PctTable"></div><div class="mt-3 pt-3" style="border-top:1px solid var(--border)" id="kpi1Consol"></div>`
+      : `<div style="height:340px" class="relative"><canvas id="kpi${idx}Canvas"></canvas></div><div class="mt-3 pt-3" style="border-top:1px solid var(--border)" id="kpi${idx}Consol"></div>`);
   return `
     <div class="surface rounded-2xl p-4 md:p-5">
       <div class="flex items-start justify-between flex-wrap gap-3 mb-3">
@@ -583,6 +584,92 @@ function kpi2ConsolHTML(){
   return `<div class="card-title mb-2">Evolução do Frete/NF médio anual</div><div class="flex flex-wrap items-stretch">${cards}</div>`;
 }
 
+function groupedNfChart(id, rows, years){
+  const ctx=document.getElementById(id); if(!ctx) return;
+  const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
+  const perYear={}; years.forEach(y=>perYear[y]=monthlyByYear(rows,y));
+  const multi = years.length>1;
+  const barDs=years.map(y=>({ type:'bar', label:String(y), yAxisID:'y',
+    data:perYear[y].map(x=> x.nf>0? x.nf/1e6 : null),
+    backgroundColor:YEAR_COLORS[y]||PALETTE[0], borderRadius:3, maxBarThickness:30, order:2 }));
+  let mNF=0; years.forEach(y=>perYear[y].forEach(x=>{ mNF=Math.max(mNF,x.nf/1e6); }));
+  const fsize = multi? 8 : 10;
+  const c=new Chart(ctx,{ data:{ labels:MES_ORDER.map(m=>MES_ABBR[m]), datasets:barDs },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:null}, events:[],
+      layout:{padding:{top:20,left:0,right:0}},
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:tc,font:{family:"'Inter'",size:11}} },
+        y:{ position:'left', beginAtZero:true, max:niceCeil(mNF), afterFit:s=>{s.width=NF_LEFTW;}, grid:{color:gl,drawTicks:false}, ticks:{color:tc,font:{size:11},callback:v=>v+' mi'} }
+      }, animation:{duration:550} },
+    plugins:[{ id:'nfLabels', afterDatasetsDraw(chart){
+      const {ctx}=chart; ctx.save(); ctx.font=`600 ${fsize}px Inter, sans-serif`; ctx.textAlign='center'; ctx.fillStyle=cssVar('--text-muted');
+      chart.data.datasets.forEach((ds,di)=>{ if(ds.type!=='bar') return;
+        chart.getDatasetMeta(di).data.forEach((bar,i)=>{ const v=ds.data[i]; if(v==null) return;
+          ctx.fillText(v.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1}), bar.x, bar.y-3); });
+      });
+      ctx.restore();
+    }}]
+  });
+  chartReg.push(c);
+}
+function textOn(hex){ hex=String(hex||'').replace('#',''); if(hex.length===3)hex=hex.split('').map(c=>c+c).join(''); const r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16); return (0.299*r+0.587*g+0.114*b)>150?'#1F3A44':'#FFFFFF'; }
+function pctTableHTML(rows, years){
+  const per={}; years.forEach(y=>per[y]=monthlyByYear(rows,y));
+  const head=`<tr><th style="width:${NF_LEFTW}px;text-align:left;padding:.3rem .4rem;color:var(--text-muted);font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">Frete/NF</th>`+
+    MES_ORDER.map(m=>`<th style="text-align:center;padding:.3rem .1rem;color:var(--text-muted);font-size:.64rem">${MES_ABBR[m]}</th>`).join('')+`</tr>`;
+  const body=years.map(y=>{
+    const cells=per[y].map(x=>{ const t = x.nf>0? (x.ratio*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%' : '—';
+      return `<td class="tnum" style="text-align:center;padding:.3rem .1rem;font-size:.72rem;${t==='—'?'color:var(--text-dim)':''}">${t}</td>`; }).join('');
+    return `<tr style="border-top:1px solid var(--border-soft)"><td style="width:${NF_LEFTW}px;padding:.3rem .4rem;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:.35rem"><span style="width:10px;height:9px;border-radius:2px;background:${YEAR_COLORS[y]||'#888'};display:inline-block"></span><b style="font-size:.74rem">${y}</b></span></td>${cells}</tr>`;
+  }).join('');
+  return `<div class="card-title mb-1" style="margin-top:.5rem">% Frete/NF por mês</div><table style="width:100%;table-layout:fixed;border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+function nfFreteMini(id, nfArr, ratioArr, fixed, barColor){
+  const ctx=document.getElementById(id); if(!ctx) return;
+  const tc=cssVar('--text-muted'), gl=cssVar('--border-soft');
+  const c=new Chart(ctx,{ data:{ labels:MES_MIN.map(m=>cap(m).charAt(0)), datasets:[
+      {type:'bar', label:'NF', data:nfArr.map(v=> v>0? v/1e6 : null), yAxisID:'y', backgroundColor:barColor, borderRadius:2, maxBarThickness:15, order:2},
+      {type:'line', label:'Frete/NF', data:ratioArr.map(v=> v==null? null : v*100), yAxisID:'y1', borderColor:FRETE_LINE, backgroundColor:FRETE_LINE, borderWidth:2, pointRadius:2, pointBackgroundColor:FRETE_LINE, tension:.3, order:1, spanGaps:true}
+  ]}, options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:null}, events:[],
+      layout:{padding:{top:14}},
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+      scales:{ x:{grid:{display:false},ticks:{color:tc,font:{size:9}}},
+        y:{position:'left',min:0,max:fixed?fixed.nfMax:undefined,grid:{color:gl,drawTicks:false},ticks:{color:tc,font:{size:9},callback:v=>v+'mi'}},
+        y1:{position:'right',min:0,max:fixed?fixed.ratioMax:undefined,grid:{display:false},ticks:{color:tc,font:{size:9},callback:v=>v+'%'}} },
+      animation:{duration:500} },
+    plugins:[{ id:'miniNfLabel', afterDatasetsDraw(chart){
+      const meta=chart.getDatasetMeta(0); if(!meta) return; const {ctx}=chart; ctx.save();
+      ctx.font="600 7px Inter, sans-serif"; ctx.textAlign='center'; ctx.fillStyle=cssVar('--text-muted');
+      meta.data.forEach((bar,i)=>{ const v=chart.data.datasets[0].data[i]; if(v==null) return;
+        ctx.fillText(v.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1}), bar.x, bar.y-2); });
+      ctx.restore();
+    }}]
+  });
+  chartReg.push(c);
+}
+function kpi1ConsolHTML(){
+  const st=kpiState.k1;
+  const rows=(st.resp&&st.resp!=='all')?FILT.filter(r=>r.Responsavel===st.resp):FILT;
+  const ys=availYears(FILT); if(!ys.length) return '';
+  const nfYear=y=>{ let f=0,nf=0; for(const r of rows){ if(+r.Ano!==+y) continue; f+=+r.Frete||0; nf+=+r.ValorNF||0; } return {f,nf}; };
+  const cards=ys.map((y,i)=>{
+    const {f,nf}=nfYear(y); const ratio=nf>0?f/nf*100:0;
+    let delta;
+    if(i===0) delta='<span style="color:var(--text-dim)">linha de base</span>';
+    else{ const pnf=nfYear(ys[i-1]).nf; const d=pnf?(nf/pnf-1)*100:0; const up=d>=0;
+      delta=`<span style="color:${up?'var(--pos)':'var(--neg)'};font-weight:600">${up?'▲':'▼'} ${up?'+':''}${d.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})}% NF vs ${ys[i-1]}</span>`; }
+    const partial = monthlyByYear(rows,y).filter(x=>x.nf>0).length<12;
+    return `<div class="flex-1 min-w-[160px] px-4 py-1 ${i>0?'yc-div':''}">
+      <div class="card-title">${y}${partial?' · parcial':''}</div>
+      <div class="font-display font-bold text-[20px] tnum mt-0.5">${money(nf)}</div>
+      <div class="text-[12px] mt-0.5" style="color:var(--text-muted)">Frete/NF ${ratio.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}%</div>
+      <div class="text-[12px] mt-0.5">${delta}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card-title mb-2">Evolução da NF transportada e do Frete/NF médio anual</div><div class="flex flex-wrap items-stretch">${cards}</div>`;
+}
+
 function drawKpi(idx){
   const st=kpiState['k'+idx];
   const rows = (st.resp && st.resp!=='all') ? FILT.filter(r=>r.Responsavel===st.resp) : FILT;
@@ -595,17 +682,24 @@ function drawKpi(idx){
     // escala compartilhada entre os anos (teto "redondo"), começando do zero
     let fixed;
     if(idx===1){
-      let mNF=0,mFr=0; perYear.forEach(a=>a.forEach(x=>{ mNF=Math.max(mNF,x.nf/1e6); mFr=Math.max(mFr,x.f/1e3); }));
-      fixed={ yMax:niceCeil(mNF), y1Max:niceCeil(mFr) };
+      let mNF=0,mR=0; perYear.forEach(a=>a.forEach(x=>{ mNF=Math.max(mNF,x.nf/1e6); mR=Math.max(mR,(x.ratio||0)*100); }));
+      fixed={ nfMax:niceCeil(mNF), ratioMax:niceCeil(mR) };
     }else{
       let mR=0; perYear.forEach(a=>a.forEach(x=>{ mR=Math.max(mR,(x.ratio||0)*100); }));
       fixed={ yMax:niceCeil(mR) };
     }
     years.forEach((y,i)=>{
       const a=perYear[i];
-      if(idx===1) comboChart('kpi1m'+y, initials, a.map(x=>x.nf), a.map(x=>x.f), true, fixed);
+      if(idx===1) nfFreteMini('kpi1m'+y, a.map(x=>x.nf), a.map(x=>x.nf>0?x.ratio:null), fixed, YEAR_COLORS[y]||nfBar());
       else { const av=yearAvgRatio(rows,y); ratioBarMini('kpi2m'+y, initials, a.map(x=>x.ratio), a.map(()=>av), fixed, YEAR_COLORS[y]||K2_LINE); }
     });
+    return;
+  }
+  if(idx===1){
+    const yearsToShow = st.year==='all' ? years : [ +st.year ];
+    groupedNfChart('kpi1Canvas', rows, yearsToShow);
+    const tbl=document.getElementById('kpi1PctTable'); if(tbl) tbl.innerHTML=pctTableHTML(rows, yearsToShow);
+    const consol=document.getElementById('kpi1Consol'); if(consol) consol.innerHTML=kpi1ConsolHTML();
     return;
   }
   if(idx===2){
@@ -613,14 +707,6 @@ function drawKpi(idx){
     groupedRatioChart('kpi2Canvas', rows, yearsToShow);
     const consol=document.getElementById('kpi2Consol'); if(consol) consol.innerHTML=kpi2ConsolHTML();
     return;
-  }
-  if(st.year==='all'){
-    const arr=monthlyAgg(rows);
-    const labels=arr.map(a=>{const[y,mo]=a.k.split('_');return MES_MIN[+mo-1]+'/'+y.slice(2);});
-    comboChart('kpi1Canvas', labels, arr.map(a=>a.nf), arr.map(a=>a.f));
-  }else{
-    const a=monthlyByYear(rows,st.year), labels=MES_MIN.map(cap);
-    comboChart('kpi1Canvas', labels, a.map(x=>x.nf), a.map(x=>x.f));
   }
 }
 
@@ -1086,8 +1172,8 @@ function render(){
   chartReg.forEach(c=>{try{c.destroy();}catch(e){}}); chartReg=[];
   const rows=FILT, years=availYears(rows);
   if(!years.length){ $('#canvas').className=''; $('#canvas').innerHTML='<div class="text-center py-20" style="color:var(--text-dim)">Sem dados.</div>'; return; }
-  const legK1=`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${nfBar()};display:inline-block"></span>NF transportada</span>`+
-              `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${FRETE_LINE};display:inline-block"></span>Frete pago</span>`;
+  const legK1=availYears(rows).map(y=>`<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:12px;height:10px;border-radius:2px;background:${YEAR_COLORS[y]||'#888'};display:inline-block"></span>${y}</span>`).join('')+
+              `<span class="text-[12px]" style="color:var(--text-dim)">colunas = NF transportada (mi) · % Frete/NF na tabela abaixo</span>`;
   const k2cmp=kpiState.k2.compare;
   const legK2 = k2cmp
     ? `<span class="flex items-center gap-1.5 text-[12px]" style="color:var(--text-muted)"><span style="width:16px;height:3px;border-radius:2px;background:${K2_LINE};display:inline-block"></span>Percentual mensal</span>`+
@@ -1100,7 +1186,7 @@ function render(){
   $('#canvas').className='space-y-4';
   $('#canvas').innerHTML =
       yearBlockHTML(rows)
-    + kpiCardHTML(1,'Valor pago de frete × valor de NF transportado','Barras = NF transportada (mi, esq.) · linha = frete pago (mil, dir.)', legK1)
+    + kpiCardHTML(1,'NF transportada × % de frete por mês','Colunas = NF transportada (R$ mi) por mês, anos lado a lado · % de frete pago (Frete/NF) na tabela abaixo do gráfico', legK1)
     + kpiCardHTML(2,'Frete / NF por mês', subK2, legK2)
     + kpiVolCardHTML()
     + kpi3CardHTML()
